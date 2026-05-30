@@ -48,7 +48,29 @@ else:
         st.rerun()
 
     # --- CONNECT TO GOOGLE SHEETS DATABASE ---
-    conn = st.connection("gsheets", type=GSheetsConnection)
+   # --- CONNECT TO GOOGLE SHEETS DATABASE ---
+
+# 1. Rebuild the exact dictionary configuration Google expects
+service_account_info = {
+    "type": "service_account",
+    "project_id": st.secrets["GSHEETS_PROJECT_ID"],
+    "private_key_id": st.secrets["GSHEETS_PRIVATE_KEY_ID"],
+    "private_key": st.secrets["GSHEETS_PRIVATE_KEY"],
+    "client_email": st.secrets["GSHEETS_CLIENT_EMAIL"],
+    "client_id": st.secrets["GSHEETS_CLIENT_ID"],
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{st.secrets['GSHEETS_CLIENT_EMAIL']}"
+}
+
+# 2. Force the connection to initialize using this dictionary explicitly
+conn = st.connection(
+    "gsheets",
+    type=GSheetsConnection,
+    spreadsheet=st.secrets["GSHEETS_SPREADSHEET"],
+    **service_account_info
+)
 
     # Read existing rows from Google Sheet
     try:
