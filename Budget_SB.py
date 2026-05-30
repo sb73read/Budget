@@ -83,7 +83,7 @@ else:
                 
         with col2:
             place = st.text_input("Place / Shop / Source Description", placeholder="e.g., Target, Office, Landlord")
-            amount = st.number_input("Amount ($)", min_value=0.0, step=0.01, format="%.2f")
+            amount = st.number_input("Amount (£)", min_value=0.0, step=0.01, format="%.2f")
 
         if st.button("Submit Entry", type="primary"):
             # Format data array
@@ -101,7 +101,7 @@ else:
             # Push changes straight to Google Sheet
             conn.update(data=updated_df)
             
-            st.success(f"Success! Saved {transaction_type} of ${amount:.2f} under '{category}' to your Google Sheet.")
+            st.success(f"Success! Saved {transaction_type} of £{amount:.2f} under '{category}' to your Google Sheet.")
             st.rerun()
 
     # --- TAB 2: METRICS & VISUALIZATIONS ---
@@ -120,9 +120,9 @@ else:
             
             # Performance Cards
             card1, card2, card3 = st.columns(3)
-            card1.metric("Total Income", f"${total_income:,.2f}")
-            card2.metric("Total Expenses", f"${total_expense:,.2f}", delta=f"-${total_expense:,.2f}", delta_color="inverse")
-            card3.metric("Net Savings", f"${net_savings:,.2f}")
+            card1.metric("Total Income", f"£{total_income:,.2f}")
+            card2.metric("Total Expenses", f"£{total_expense:,.2f}", delta=f"-£{total_expense:,.2f}", delta_color="inverse")
+            card3.metric("Net Savings", f"£{net_savings:,.2f}")
             
             st.markdown("---")
             
