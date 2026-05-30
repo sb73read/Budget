@@ -52,8 +52,8 @@ else:
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         
         # Clean up any potential format issues with the private key
-        fixed_key = st.secrets["GSHEETS_PRIVATE_KEY"].replace(r'\n', '\n')
-
+        raw_key = st.secrets["GSHEETS_PRIVATE_KEY"]
+        fixed_key = raw_key.replace(r'\\n', '\n').replace(r'\n', '\n')
         creds_dict = {
             "type": "service_account",
             "project_id": st.secrets["GSHEETS_PROJECT_ID"],
