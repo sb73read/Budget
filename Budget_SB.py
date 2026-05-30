@@ -83,17 +83,15 @@ else:
         if records:
             existing_data = pd.DataFrame(records)
         else:
-            # If the sheet has headers but no data, get_all_records() is empty. Let's pull the raw values instead.
             raw_values = worksheet.get_all_values()
             if not raw_values:
-                # Completely blank sheet: Initialize headers programmatically
                 headers = ["Date", "Type", "Category", "Place/Shop", "Amount"]
                 worksheet.append_row(headers)
             existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
             
     except Exception as e:
-        st.error(f"⚠️ Google Sheets Connection Failure: {e}")
-        st.info("Please make sure your Google Sheet is shared with your Service Account email address as an **Editor**.")
+        # 🚨 THIS WILL SHOW THE EXACT CRYPTOGRAPHIC OR API ERROR CODE BELOW
+        st.error(f"⚠️ Raw Google Error: {str(e)}")
 
     # --- CATEGORY LISTS ---
     EXPENSE_CATEGORIES = [
