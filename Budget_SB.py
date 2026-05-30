@@ -31,7 +31,7 @@ if st.session_state.auth is None:
     result = oauth2.authorize_button(
         name="Sign in with Google",
         icon="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg",
-        redirect_uri=st.secrets.get("https://budget-sb.streamlit.app"),
+        redirect_uri=st.secrets.get("https://budget-sb.streamlit.app/"),
         scope="openid email profile",
         key="google_auth"
     )
