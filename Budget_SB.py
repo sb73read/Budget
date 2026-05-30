@@ -91,7 +91,6 @@ else:
         return sheet.get_worksheet(0)
 
     worksheet = None
-    # Updated default tracking DataFrame with a dedicated 'User' tracking column
     expected_headers = ["Date", "Type", "Category", "Place/Shop", "Amount", "User"]
     existing_data = pd.DataFrame(columns=expected_headers)
 
@@ -99,16 +98,29 @@ else:
         worksheet = get_google_sheet()
         raw_rows = worksheet.get_all_values()
         
-        if not raw_rows or len(raw_rows) <= 1:
-            if not raw_rows:
-                worksheet.append_row(expected_headers)
+        # Check if the sheet is missing headers entirely or has mismatched columns
+        if not raw_rows or "Amount" not in raw_rows[0]:
+            # Clear whatever mess is in the sheet and initialize fresh, clean headers
+            try:
+                worksheet.clear()
+            except Exception:
+                pass
+            worksheet.append_row(expected_headers)
             existing_data = pd.DataFrame(columns=expected_headers)
+        
+        # If headers exist but no records are present yet
+        elif len(raw_rows) == 1:
+            existing_data = pd.DataFrame(columns=expected_headers)
+            
         else:
-            # Rebuild dataframe checking that old versions without the 'User' column don't crash
+            # Rebuild dataframe cleanly from the confirmed headers
             headers = raw_rows[0]
             existing_data = pd.DataFrame(raw_rows[1:], columns=headers)
+            
+            # Auto-patch legacy rows that are missing the new User column
             if "User" not in existing_data.columns:
                 existing_data["User"] = "Legacy Entry"
+                
     except Exception as e:
         st.error(f"❌ Actual API Error Caught: {str(e)}")
 
