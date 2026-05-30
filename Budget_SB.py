@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -58,11 +57,10 @@ else:
         
         # 1. Clean out existing raw/literal breaks and normalize whitespaces
         cleaned_key = raw_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
-        cleaned_key = "".join(cleaned_key.split()) # Strips all rogue spaces/tabs/newlines
+        cleaned_key = "".join(cleaned_key.split()) 
         
         # 2. Re-architect the correct RSA layout with explicit, strict line lengths
         formatted_private_key = "-----BEGIN PRIVATE KEY-----\n"
-        # Split the base64 string into healthy 64-character segments
         for i in range(0, len(cleaned_key), 64):
             formatted_private_key += cleaned_key[i:i+64] + "\n"
         formatted_private_key += "-----END PRIVATE KEY-----\n"
@@ -72,7 +70,7 @@ else:
             "type": "service_account",
             "project_id": st.secrets["GSHEETS_PROJECT_ID"],
             "private_key_id": st.secrets["GSHEETS_PRIVATE_KEY_ID"],
-            "private_key": formatted_private_key,  # <-- Injects our sanitized, perfect key structure
+            "private_key": formatted_private_key,  
             "client_email": st.secrets["GSHEETS_CLIENT_EMAIL"],
             "client_id": st.secrets["GSHEETS_CLIENT_ID"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
@@ -90,7 +88,6 @@ else:
 
     try:
         worksheet = get_google_sheet()
-        # Fetch data and convert to DataFrame safely
         records = worksheet.get_all_records()
         existing_data = pd.DataFrame(records)
         if existing_data.empty:
@@ -128,7 +125,6 @@ else:
             amount = st.number_input("Amount ($)", min_value=0.0, step=0.01, format="%.2f")
 
         if st.button("Submit Entry", type="primary"):
-            # Format row data as a plain list
             new_row_data = [
                 date.strftime("%Y-%m-%d"),
                 transaction_type,
@@ -138,7 +134,6 @@ else:
             ]
             
             try:
-                # Append directly to the Google Sheet live row
                 worksheet.append_row(new_row_data)
                 st.success(f"Success! Appended {transaction_type} of ${amount:.2f} to your spreadsheet.")
                 st.rerun()
