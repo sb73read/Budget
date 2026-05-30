@@ -5,13 +5,14 @@ from datetime import datetime
 from streamlit_oauth import OAuth2Component
 import gspread
 from google.oauth2.service_account import Credentials
+import base64
+import json
 
 # --- APP CONFIGURATION ---
 st.set_page_config(page_title="Personal Budget Tracker", layout="wide")
 st.title("💰 Personal Budget & Expense Tracker")
 
 # --- CUSTOM COLOR MAP FOR CATEGORIES ---
-# This ensures each category keeps a beautiful, distinct color across all charts
 CATEGORY_COLORS = {
     "Grocery": "#3498db",           # Blue
     "OTT Bills": "#9b59b6",          # Purple
@@ -55,23 +56,28 @@ if st.session_state.auth is None:
         st.rerun()
 
 else:
-    # --- USER PROFILE RECOGNITION ---
-    # Decoding the token payload to automatically fetch the user's real name
-    user_info = st.session_state.auth.get("id_token", {})
-    # Fallback to email or "Unknown User" if profile name mapping is restricted
-    user_name = st.session_state.auth.get("token", {}).get("email", "Default User")
+    # --- FIXED: EXTRACT ACTUAL GOOGLE USER IDENTITY ---
+    try:
+        id_token = st.session_state.auth["token"]["id_token"]
+        payload = id_token.split(".")[1]
+        padded_payload = payload + "=" * (4 - len(payload) % 4)
+        decoded_bytes = base64.b64decode(padded_payload)
+        user_data = json.loads(decoded_bytes)
+        user_name = user_data.get("email", "Authenticated User")
+    except Exception:
+        user_name = "Authenticated User"
     
-    st.sidebar.success(f"👋 Welcome, {user_name}!")
+    st.sidebar.success(f"👋 Logged in as: {user_name}")
     if st.sidebar.button("Log Out"):
         st.session_state.auth = None
         st.rerun()
 
-    # --- CONNECT TO GOOGLE SHEETS ---
+    # --- CONNECT TO GOOGLE DRIVE ---
     @st.cache_resource(ttl="0d")
-    def get_google_sheet():
+    def get_google_client():
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-        fixed_key = st.secrets["GSHEETS_PRIVATE_KEY"].replace(r'\\n', '\n').replace(r'\n', '\n')
-
+        raw_key = st.secrets["GSHEETS_PRIVATE_KEY"]
+        fixed_key = raw_key.replace(r'\\n', '\n').replace(r'\n', '\n')
         creds_dict = {
             "type": "service_account",
             "project_id": st.secrets["GSHEETS_PROJECT_ID"],
@@ -84,54 +90,48 @@ else:
             "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
             "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{st.secrets['GSHEETS_CLIENT_EMAIL']}"
         }
-        
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-        client = gspread.authorize(creds)
-        sheet = client.open_by_url(st.secrets["GSHEETS_SPREADSHEET"])
-        return sheet.get_worksheet(0)
+        return gspread.authorize(creds)
 
-    worksheet = None
+    # Global structural properties
     expected_headers = ["Date", "Type", "Category", "Place/Shop", "Amount", "User"]
-    existing_data = pd.DataFrame(columns=expected_headers)
-
+    spreadsheet_link = st.secrets["GSHEETS_SPREADSHEET"]
+    
+    # Dynamic Navigation Control for Subsheets
     try:
-        worksheet = get_google_sheet()
-        raw_rows = worksheet.get_all_values()
+        gc = get_google_client()
+        sh = gc.open_by_url(spreadsheet_link)
         
-        # Check if the sheet is missing headers entirely or has mismatched columns
-        if not raw_rows or "Amount" not in raw_rows[0]:
-            # Clear whatever mess is in the sheet and initialize fresh, clean headers
-            try:
-                worksheet.clear()
-            except Exception:
-                pass
-            worksheet.append_row(expected_headers)
-            existing_data = pd.DataFrame(columns=expected_headers)
+        # Pull list of worksheet tab names
+        all_worksheets = sh.worksheets()
+        sheet_names = [sheet.title for sheet in all_worksheets]
         
-        # If headers exist but no records are present yet
-        elif len(raw_rows) == 1:
+        # Build month selector widget in sidebar
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📅 Select Month View")
+        target_month_sheet = st.sidebar.selectbox("Active Ledger Tab", sheet_names)
+        
+        # Extract target tab values
+        active_worksheet = sh.worksheet(target_month_sheet)
+        raw_rows = active_worksheet.get_all_values()
+        
+        if not raw_rows:
+            active_worksheet.append_row(expected_headers)
             existing_data = pd.DataFrame(columns=expected_headers)
-            
         else:
-            # Rebuild dataframe cleanly from the confirmed headers
-            headers = raw_rows[0]
-            existing_data = pd.DataFrame(raw_rows[1:], columns=headers)
+            existing_data = pd.DataFrame(raw_rows[1:], columns=raw_rows[0])
             
-            # Auto-patch legacy rows that are missing the new User column
-            if "User" not in existing_data.columns:
-                existing_data["User"] = "Legacy Entry"
-                
     except Exception as e:
-        st.error(f"❌ Actual API Error Caught: {str(e)}")
+        st.error(f"❌ Core File Synchronization Failure: {e}")
+        existing_data = pd.DataFrame(columns=expected_headers)
 
-    # --- CATEGORY LISTS ---
+    # --- EXPENSE & INCOME LISTS ---
     EXPENSE_CATEGORIES = list(CATEGORY_COLORS.keys())
     INCOME_CATEGORIES = ["Salary", "Interest", "Investment", "Freelance/Side Hustle", "Others"]
 
-    # --- APP NAVIGATION TABS ---
     tab1, tab2, tab3 = st.tabs(["📝 Log Transaction", "📊 Dashboard & Analytics", "📋 View Records"])
 
-    # --- TAB 1: INPUT FORM ---
+    # --- TAB 1: INPUT DATA ---
     with tab1:
         st.header("Add New Entry")
         transaction_type = st.radio("Transaction Type", ["Expense", "Income"], horizontal=True)
@@ -145,36 +145,37 @@ else:
                 category = st.selectbox("Source of Income", INCOME_CATEGORIES)
                 
         with col2:
-            place = st.text_input("Place / Shop / Source Description", placeholder="e.g., Target, Office, Landlord")
-            amount = st.number_input("Amount (£)", min_value=0.0, step=0.01, format="%.2f")
+            place = st.text_input("Place / Shop / Source Description", placeholder="e.g., Walmart")
+            amount = st.number_input("Amount ($)", min_value=0.0, step=0.01, format="%.2f")
 
-        button_disabled = worksheet is None
-        
-        if st.button("Submit Entry", type="primary", disabled=button_disabled):
-            # Automated user tagging payload row
-            new_row_data = [
-                date.strftime("%Y-%m-%d"),
-                transaction_type,
-                category,
-                place,
-                float(amount),
-                user_name  # <-- Automatically logs who spent the money
-            ]
+        if st.button("Submit Entry", type="primary"):
+            # Automatically calculate destination worksheet name based on user transaction date (e.g., "2026-05")
+            computed_sheet_name = date.strftime("%Y-%m")
+            
+            new_row_data = [date.strftime("%Y-%m-%d"), transaction_type, category, place, float(amount), user_name]
             
             try:
-                worksheet.append_row(new_row_data)
-                st.success(f"Success! Appended {transaction_type} of £{amount:.2f} to your spreadsheet.")
+                # Self-healing monthly tab generator
+                if computed_sheet_name not in sheet_names:
+                    new_ws = sh.add_worksheet(title=computed_sheet_name, rows=100, cols=10)
+                    new_ws.append_row(expected_headers)
+                    destination_ws = new_ws
+                else:
+                    destination_ws = sh.worksheet(computed_sheet_name)
+                
+                destination_ws.append_row(new_row_data)
+                st.success(f"Success! Appended data directly to monthly tab sheet: '{computed_sheet_name}'")
                 st.clear_cache()
                 st.rerun()
             except Exception as e:
-                st.error(f"Could not save row to Google Sheet: {e}")
+                st.error(f"Failed to record data element to spreadsheet: {e}")
 
-    # --- TAB 2: METRICS & VISUALIZATIONS ---
+    # --- TAB 2: METRICS & MONTH-OVER-MONTH ANALYTICS ---
     with tab2:
-        st.header("Financial Analytics")
+        st.header(f"Financial Analytics — View: {target_month_sheet}")
         
-        if existing_data.empty:
-            st.info("No transaction data found in Google Sheets yet. Log an entry to populate charts.")
+        if existing_data.empty or len(existing_data) < 1:
+            st.info("No transaction records populated in this specific monthly tab variant yet.")
         else:
             existing_data["Amount"] = pd.to_numeric(existing_data["Amount"], errors='coerce').fillna(0.0)
             
@@ -183,69 +184,82 @@ else:
             net_savings = total_income - total_expense
             
             card1, card2, card3 = st.columns(3)
-            card1.metric("Total Income", f"£{total_income:,.2f}")
-            card2.metric("Total Expenses", f"£{total_expense:,.2f}", delta=f"-£{total_expense:,.2f}", delta_color="inverse")
-            card3.metric("Net Savings", f"£{net_savings:,.2f}")
+            card1.metric("Total Income", f"${total_income:,.2f}")
+            card2.metric("Total Expenses", f"${total_expense:,.2f}", delta=f"-${total_expense:,.2f}", delta_color="inverse")
+            card3.metric("Net Savings", f"${net_savings:,.2f}")
             
             st.markdown("---")
             
-            # --- NEW ADDITION: SEPARATED CATEGORICAL CALCULATIONS SUMS ---
-            st.subheader("📊 Expense Breakdown Summary Table")
+            # Category Sum Displays
             expense_df = existing_data[existing_data["Type"] == "Expense"]
-            
             if not expense_df.empty:
-                # Group by and aggregate to sum up each individual category separately
+                st.subheader("📊 Individual Expense Metrics Summary")
                 category_sums = expense_df.groupby("Category")["Amount"].sum().reset_index()
-                category_sums = category_sums.sort_values(by="Amount", ascending=False).reset_index(drop=True)
-                
-                # Format for presentation
-                category_sums_display = category_sums.copy()
-                category_sums_display["Amount"] = category_sums_display["Amount"].map("£{:,.2f}".format)
-                
-                # Display individual sums side by side using clean UI columns
                 cols = st.columns(4)
                 for index, row in category_sums.iterrows():
-                    col_index = index % 4
-                    with cols[col_index]:
-                        st.metric(label=row["Category"], value=f"£{row['Amount']:,.2f}")
-                
+                    with cols[index % 4]:
+                        st.metric(label=row["Category"], value=f"${row['Amount']:,.2f}")
                 st.markdown("---")
             
-            # Visualizations Side-by-Side
             chart_col1, chart_col2 = st.columns(2)
             with chart_col1:
                 st.subheader("Expense Volume Allocation")
                 if not expense_df.empty:
-                    # Injects custom color coding map directly into the Pie layout
                     fig_pie = px.pie(
-                        expense_df, 
-                        values="Amount", 
-                        names="Category", 
-                        hole=0.4,
-                        color="Category",
-                        color_discrete_map=CATEGORY_COLORS
+                        expense_df, values="Amount", names="Category", hole=0.4,
+                        color="Category", color_discrete_map=CATEGORY_COLORS
                     )
                     st.plotly_chart(fig_pie, use_container_width=True)
                 else:
-                    st.write("No expenses logged to generate a chart.")
+                    st.write("No active monthly expenses.")
                     
             with chart_col2:
-                st.subheader("Cash Flow Trend via Purchaser Profile")
-                # Group bars by user profile so you can see who logged what amount
-                fig_bar = px.bar(
-                    existing_data, 
-                    x="Date", 
-                    y="Amount", 
-                    color="User", 
-                    barmode="group",
-                    hover_data=["Category", "Place/Shop"]
-                )
+                st.subheader("Cash Flow Profile Breakdown")
+                fig_bar = px.bar(existing_data, x="Date", y="Amount", color="User", barmode="group")
                 st.plotly_chart(fig_bar, use_container_width=True)
+
+            # --- NEW ADDITION: MONTH-OVER-MONTH CROSS ANALYSIS ---
+            st.markdown("---")
+            st.subheader("📈 Multi-Month Comparative Analysis")
+            
+            # Fetch all rows from all tabs dynamically to build a historical trend graph
+            all_historical_data = []
+            for name in sheet_names:
+                try:
+                    tab_rows = sh.worksheet(name).get_all_values()
+                    if len(tab_rows) > 1:
+                        tab_df = pd.DataFrame(tab_rows[1:], columns=tab_rows[0])
+                        tab_df["Month_Source"] = name  # Record historical label origin
+                        all_historical_data.append(tab_df)
+                except Exception:
+                    pass
+            
+            if all_historical_data:
+                full_historical_df = pd.concat(all_historical_data, ignore_index=True)
+                full_historical_df["Amount"] = pd.to_numeric(full_historical_df["Amount"], errors='coerce').fillna(0.0)
+                hist_expense_df = full_historical_df[full_historical_df["Type"] == "Expense"]
+                
+                if not hist_expense_df.empty:
+                    # Group data elements by month tab index source and cross categories
+                    comparison_df = hist_expense_df.groupby(["Month_Source", "Category"])["Amount"].sum().reset_index()
+                    
+                    fig_trend = px.bar(
+                        comparison_df, 
+                        x="Month_Source", 
+                        y="Amount", 
+                        color="Category",
+                        title="Month-over-Month Category Trend Spends Comparison",
+                        barmode="group",
+                        color_discrete_map=CATEGORY_COLORS
+                    )
+                    st.plotly_chart(fig_trend, use_container_width=True)
+                else:
+                    st.write("Add expense data across multiple tabs to generate historical trends.")
 
     # --- TAB 3: DATA LEDGER ---
     with tab3:
-        st.header("Live Google Sheets Ledger")
+        st.header(f"📋 Records for Sheet: {target_month_sheet}")
         if not existing_data.empty:
             st.dataframe(existing_data.sort_values(by="Date", ascending=False), use_container_width=True)
         else:
-            st.write("No transaction history detected.")
+            st.write("No entries detected in this sheet view tab.")
