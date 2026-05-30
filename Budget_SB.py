@@ -70,7 +70,7 @@ conn = st.connection(
     type=GSheetsConnection,
     spreadsheet=st.secrets["GSHEETS_SPREADSHEET"],
     **service_account_info
-)
+
 
     # Read existing rows from Google Sheet
     try:
