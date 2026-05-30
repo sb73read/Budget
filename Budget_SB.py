@@ -31,7 +31,7 @@ if st.session_state.auth is None:
     result = oauth2.authorize_button(
         name="Sign in with Google",
         icon="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg",
-        redirect_uri=st.secrets.get("https://budget-sb.streamlit.app/"),
+        redirect_uri=st.secrets.get("REDIRECT_URI", "https://budget-sb.streamlit.app/"),
         scope="openid email profile",
         key="google_auth"
     )
@@ -51,9 +51,8 @@ else:
     def get_google_sheet():
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         
-        # Protect against double escaping of backslashes from Streamlit's secrets manager
-        raw_key = st.secrets["GSHEETS_PRIVATE_KEY"]
-        fixed_key = raw_key.replace(r'\\n', '\n').replace(r'\n', '\n')
+        # Clean up any potential format issues with the private key
+        fixed_key = st.secrets["GSHEETS_PRIVATE_KEY"].replace(r'\n', '\n')
 
         creds_dict = {
             "type": "service_account",
@@ -73,31 +72,28 @@ else:
         sheet = client.open_by_url(st.secrets["GSHEETS_SPREADSHEET"])
         return sheet.get_worksheet(0)
 
-    # Core data placeholders
+    # Initialize connection variables safely
     worksheet = None
     existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
 
     try:
         worksheet = get_google_sheet()
+        records = worksheet.get_all_records()
         
-        # Direct raw value inspect to sidestep empty get_all_records() bugs
-        raw_rows = worksheet.get_all_values()
-        
-        if not raw_rows or len(raw_rows) <= 1:
-            # The sheet is entirely empty or only has the header block
-            if not raw_rows:
+        if records:
+            existing_data = pd.DataFrame(records)
+        else:
+            # If the sheet has headers but no data, get_all_records() is empty. Let's pull the raw values instead.
+            raw_values = worksheet.get_all_values()
+            if not raw_values:
+                # Completely blank sheet: Initialize headers programmatically
                 headers = ["Date", "Type", "Category", "Place/Shop", "Amount"]
                 worksheet.append_row(headers)
             existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
-        else:
-            # Construct DataFrame from raw cell arrays safely
-            existing_data = pd.DataFrame(raw_rows[1:], columns=raw_rows[0])
             
     except Exception as e:
-        # Fallback tracking if Google drops connectivity completely
-        st.error(f"⚠️ Initialization Status Code Trace: {type(e).__name__}")
-        if not str(e):
-            st.warning("Empty exception message caught. Self-repairing schema tables now.")
+        st.error(f"⚠️ Google Sheets Connection Failure: {e}")
+        st.info("Please make sure your Google Sheet is shared with your Service Account email address as an **Editor**.")
 
     # --- CATEGORY LISTS ---
     EXPENSE_CATEGORIES = [
@@ -127,6 +123,7 @@ else:
             place = st.text_input("Place / Shop / Source Description", placeholder="e.g., Target, Office, Landlord")
             amount = st.number_input("Amount ($)", min_value=0.0, step=0.01, format="%.2f")
 
+        # Disable button if the connection to Google Sheets failed
         button_disabled = worksheet is None
         
         if st.button("Submit Entry", type="primary", disabled=button_disabled):
@@ -141,13 +138,12 @@ else:
             try:
                 worksheet.append_row(new_row_data)
                 st.success(f"Success! Appended {transaction_type} of ${amount:.2f} to your spreadsheet.")
-                st.clear_cache() # Clears gspread read cache to force sync updates
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not save row to Google Sheet: {e}")
                 
         if button_disabled:
-            st.warning("⚠️ Submission locked: Check configurations or check if service account has Editor access.")
+            st.warning("⚠️ Submission is locked because the app cannot connect to your Google Sheet. Check the connection error above.")
 
     # --- TAB 2: METRICS & VISUALIZATIONS ---
     with tab2:
