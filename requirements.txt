@@ -4,3 +4,5 @@ plotly
 streamlit-oauth
 google-auth
 gspread
+st-theme
+streamlit-gsheets-connection
