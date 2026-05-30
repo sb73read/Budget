@@ -75,27 +75,26 @@ else:
         return sheet.get_worksheet(0)
 
     # Initialize connection variables safely
+    # Core data placeholders
     worksheet = None
     existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
 
     try:
         worksheet = get_google_sheet()
-        records = worksheet.get_all_records()
+        raw_rows = worksheet.get_all_values()
         
-        if records:
-            existing_data = pd.DataFrame(records)
-        else:
-            # If the sheet has headers but no data, get_all_records() is empty. Let's pull the raw values instead.
-            raw_values = worksheet.get_all_values()
-            if not raw_values:
-                # Completely blank sheet: Initialize headers programmatically
+        if not raw_rows or len(raw_rows) <= 1:
+            if not raw_rows:
                 headers = ["Date", "Type", "Category", "Place/Shop", "Amount"]
                 worksheet.append_row(headers)
             existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
+        else:
+            existing_data = pd.DataFrame(raw_rows[1:], columns=raw_rows[0])
             
     except Exception as e:
-        st.error(f"⚠️ Google Sheets Connection Failure: {e}")
-        st.info("Please make sure your Google Sheet is shared with your Service Account email address as an **Editor**.")
+        # 🚨 THIS IS THE FIX: This displays the real API problem on your app screen
+        st.error(f"❌ Actual API Error Caught: {str(e)}")
+        st.info(f"Error Type: {type(e).__name__}")
 
     # --- CATEGORY LISTS ---
     EXPENSE_CATEGORIES = [
