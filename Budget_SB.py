@@ -1,9 +1,11 @@
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
 from datetime import datetime
 from streamlit_oauth import OAuth2Component
-from streamlit_gsheets import GSheetsConnection
+import gspread
+from google.oauth2.service_account import Credentials
 
 # --- APP CONFIGURATION ---
 st.set_page_config(page_title="Personal Budget Tracker", layout="wide")
@@ -45,26 +47,42 @@ else:
         st.session_state.auth = None
         st.rerun()
 
-    # --- CONNECT TO GOOGLE SHEETS DATABASE ---
-    # Flat single-line configurations eliminate nesting alignment failures
-    conn = st.connection(
-        "gsheets",
-        type=GSheetsConnection,
-        spreadsheet=st.secrets["GSHEETS_SPREADSHEET"],
-        type_account="service_account",
-        project_id=st.secrets["GSHEETS_PROJECT_ID"],
-        private_key_id=st.secrets["GSHEETS_PRIVATE_KEY_ID"],
-        private_key=st.secrets["GSHEETS_PRIVATE_KEY"],
-        client_email=st.secrets["GSHEETS_CLIENT_EMAIL"],
-        client_id=st.secrets["GSHEETS_CLIENT_ID"],
-        auth_uri="https://accounts.google.com/o/oauth2/auth",
-        token_uri="https://oauth2.googleapis.com/token"
-    )
+    # --- CONNECT TO GOOGLE SHEETS VIA STANDARD GSPREAD ---
+    @st.cache_resource(ttl="0d")
+    def get_google_sheet():
+        # Define permissions scope
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        
+        # Build credential dictionary safely without TOML nesting bugs
+        creds_dict = {
+            "type": "service_account",
+            "project_id": st.secrets["GSHEETS_PROJECT_ID"],
+            "private_key_id": st.secrets["GSHEETS_PRIVATE_KEY_ID"],
+            "private_key": st.secrets["GSHEETS_PRIVATE_KEY"].replace(r'\n', '\n'),
+            "client_email": st.secrets["GSHEETS_CLIENT_EMAIL"],
+            "client_id": st.secrets["GSHEETS_CLIENT_ID"],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+            "client_x509_cert_url": f"https://www.googleapis.com/robot/v1/metadata/x509/{st.secrets['GSHEETS_CLIENT_EMAIL']}"
+        }
+        
+        creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+        client = gspread.authorize(creds)
+        
+        # Open via spreadsheet URL
+        sheet = client.open_by_url(st.secrets["GSHEETS_SPREADSHEET"])
+        return sheet.get_worksheet(0)
 
-    # Cleaned, strictly 4-space aligned extraction block
     try:
-        existing_data = conn.read(ttl="0d")
-    except Exception:
+        worksheet = get_google_sheet()
+        # Fetch data and convert to DataFrame safely
+        records = worksheet.get_all_records()
+        existing_data = pd.DataFrame(records)
+        if existing_data.empty:
+            existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
+    except Exception as e:
+        st.error(f"Failed to pull data from Google Sheets: {e}")
         existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
 
     # --- CATEGORY LISTS ---
@@ -96,19 +114,22 @@ else:
             amount = st.number_input("Amount ($)", min_value=0.0, step=0.01, format="%.2f")
 
         if st.button("Submit Entry", type="primary"):
-            new_row = pd.DataFrame([{
-                "Date": date.strftime("%Y-%m-%d"),
-                "Type": transaction_type,
-                "Category": category,
-                "Place/Shop": place,
-                "Amount": amount
-            }])
+            # Format row data as a plain list
+            new_row_data = [
+                date.strftime("%Y-%m-%d"),
+                transaction_type,
+                category,
+                place,
+                float(amount)
+            ]
             
-            updated_df = pd.concat([existing_data, new_row], ignore_index=True)
-            conn.update(data=updated_df)
-            
-            st.success(f"Success! Saved {transaction_type} of ${amount:.2f} under '{category}' to your Google Sheet.")
-            st.rerun()
+            try:
+                # Append directly to the Google Sheet live row
+                worksheet.append_row(new_row_data)
+                st.success(f"Success! Appended {transaction_type} of ${amount:.2f} to your spreadsheet.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Could not save row to Google Sheet: {e}")
 
     # --- TAB 2: METRICS & VISUALIZATIONS ---
     with tab2:
