@@ -49,10 +49,12 @@ else:
     # --- CONNECT TO GOOGLE SHEETS VIA STANDARD GSPREAD ---
     @st.cache_resource(ttl="0d")
     def get_google_sheet():
-        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        # ⬇️ CHANGE THIS: Only request spreadsheet access to satisfy Google's OAuth Policy
+        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
         
         # Clean up any potential format issues with the private key
-        fixed_key = st.secrets["GSHEETS_PRIVATE_KEY"].replace(r'\n', '\n')
+        raw_key = st.secrets["GSHEETS_PRIVATE_KEY"]
+        fixed_key = raw_key.replace(r'\\n', '\n').replace(r'\n', '\n')
 
         creds_dict = {
             "type": "service_account",
