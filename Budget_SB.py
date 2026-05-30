@@ -49,7 +49,7 @@ else:
 
     # --- CONNECT TO GOOGLE SHEETS VIA STANDARD GSPREAD ---
     @st.cache_resource(ttl="0d")
-def get_google_sheet():
+    def get_google_sheet():
         # Define permissions scope
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         
