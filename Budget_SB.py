@@ -78,7 +78,7 @@ conn = st.connection(
     except Exception:
         # Fallback structure if the sheet is completely blank
         existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
-
+)
     # --- CATEGORY LISTS ---
     EXPENSE_CATEGORIES = [
         "Grocery", "OTT Bills", "Mobile Bills", "Vacation", 
