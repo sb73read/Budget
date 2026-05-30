@@ -134,7 +134,7 @@ else:
                 
         with col2:
             place = st.text_input("Place / Shop / Source Description", placeholder="e.g., Target, Office, Landlord")
-            amount = st.number_input("Amount ($)", min_value=0.0, step=0.01, format="%.2f")
+            amount = st.number_input("Amount (£)", min_value=0.0, step=0.01, format="%.2f")
 
         button_disabled = worksheet is None
         
@@ -151,7 +151,7 @@ else:
             
             try:
                 worksheet.append_row(new_row_data)
-                st.success(f"Success! Appended {transaction_type} of ${amount:.2f} to your spreadsheet.")
+                st.success(f"Success! Appended {transaction_type} of £{amount:.2f} to your spreadsheet.")
                 st.clear_cache()
                 st.rerun()
             except Exception as e:
@@ -171,9 +171,9 @@ else:
             net_savings = total_income - total_expense
             
             card1, card2, card3 = st.columns(3)
-            card1.metric("Total Income", f"${total_income:,.2f}")
-            card2.metric("Total Expenses", f"${total_expense:,.2f}", delta=f"-${total_expense:,.2f}", delta_color="inverse")
-            card3.metric("Net Savings", f"${net_savings:,.2f}")
+            card1.metric("Total Income", f"£{total_income:,.2f}")
+            card2.metric("Total Expenses", f"£{total_expense:,.2f}", delta=f"-£{total_expense:,.2f}", delta_color="inverse")
+            card3.metric("Net Savings", f"£{net_savings:,.2f}")
             
             st.markdown("---")
             
@@ -188,14 +188,14 @@ else:
                 
                 # Format for presentation
                 category_sums_display = category_sums.copy()
-                category_sums_display["Amount"] = category_sums_display["Amount"].map("${:,.2f}".format)
+                category_sums_display["Amount"] = category_sums_display["Amount"].map("£{:,.2f}".format)
                 
                 # Display individual sums side by side using clean UI columns
                 cols = st.columns(4)
                 for index, row in category_sums.iterrows():
                     col_index = index % 4
                     with cols[col_index]:
-                        st.metric(label=row["Category"], value=f"${row['Amount']:,.2f}")
+                        st.metric(label=row["Category"], value=f"£{row['Amount']:,.2f}")
                 
                 st.markdown("---")
             
