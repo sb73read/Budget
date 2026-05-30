@@ -47,16 +47,13 @@ else:
         st.rerun()
 
     # --- CONNECT TO GOOGLE SHEETS VIA STANDARD GSPREAD ---
-# --- CONNECT TO GOOGLE SHEETS VIA STANDARD GSPREAD ---
     @st.cache_resource(ttl="0d")
     def get_google_sheet():
-        # Define permissions scope
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         
-        # Pull the key directly. We use .replace to fix any literal escape characters
+        # Clean up any potential format issues with the private key
         fixed_key = st.secrets["GSHEETS_PRIVATE_KEY"].replace(r'\n', '\n')
 
-        # Build credential dictionary safely 
         creds_dict = {
             "type": "service_account",
             "project_id": st.secrets["GSHEETS_PROJECT_ID"],
@@ -72,20 +69,31 @@ else:
         
         creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
         client = gspread.authorize(creds)
-        
-        # Open via spreadsheet URL
         sheet = client.open_by_url(st.secrets["GSHEETS_SPREADSHEET"])
         return sheet.get_worksheet(0)
+
+    # Initialize connection variables safely
+    worksheet = None
+    existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
 
     try:
         worksheet = get_google_sheet()
         records = worksheet.get_all_records()
-        existing_data = pd.DataFrame(records)
-        if existing_data.empty:
+        
+        if records:
+            existing_data = pd.DataFrame(records)
+        else:
+            # If the sheet has headers but no data, get_all_records() is empty. Let's pull the raw values instead.
+            raw_values = worksheet.get_all_values()
+            if not raw_values:
+                # Completely blank sheet: Initialize headers programmatically
+                headers = ["Date", "Type", "Category", "Place/Shop", "Amount"]
+                worksheet.append_row(headers)
             existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
+            
     except Exception as e:
-        st.error(f"Failed to pull data from Google Sheets: {e}")
-        existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
+        st.error(f"⚠️ Google Sheets Connection Failure: {e}")
+        st.info("Please make sure your Google Sheet is shared with your Service Account email address as an **Editor**.")
 
     # --- CATEGORY LISTS ---
     EXPENSE_CATEGORIES = [
@@ -115,7 +123,10 @@ else:
             place = st.text_input("Place / Shop / Source Description", placeholder="e.g., Target, Office, Landlord")
             amount = st.number_input("Amount ($)", min_value=0.0, step=0.01, format="%.2f")
 
-        if st.button("Submit Entry", type="primary"):
+        # Disable button if the connection to Google Sheets failed
+        button_disabled = worksheet is None
+        
+        if st.button("Submit Entry", type="primary", disabled=button_disabled):
             new_row_data = [
                 date.strftime("%Y-%m-%d"),
                 transaction_type,
@@ -130,6 +141,9 @@ else:
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not save row to Google Sheet: {e}")
+                
+        if button_disabled:
+            st.warning("⚠️ Submission is locked because the app cannot connect to your Google Sheet. Check the connection error above.")
 
     # --- TAB 2: METRICS & VISUALIZATIONS ---
     with tab2:
@@ -138,7 +152,7 @@ else:
         if existing_data.empty:
             st.info("No transaction data found in Google Sheets yet. Log an entry to populate charts.")
         else:
-            existing_data["Amount"] = existing_data["Amount"].astype(float)
+            existing_data["Amount"] = pd.to_numeric(existing_data["Amount"], errors='coerce').fillna(0.0)
             
             total_income = existing_data[existing_data["Type"] == "Income"]["Amount"].sum()
             total_expense = existing_data[existing_data["Type"] == "Expense"]["Amount"].sum()
