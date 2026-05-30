@@ -32,7 +32,7 @@ if st.session_state.auth is None:
     result = oauth2.authorize_button(
         name="Continue with Google",
         icon="https://upload.wikimedia.org/wikipedia/commons/5/53/Google_%22G%22_Logo.svg",
-        redirect_uri="http://localhost:8501", # Change to streamlit sharing URL in prod
+        redirect_uri="https://budget-sb.streamlit.app/", # Change to streamlit sharing URL in prod
         scope="openid email profile https://www.googleapis.com/auth/drive.file",
         key="google_auth"
     )
