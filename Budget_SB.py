@@ -48,17 +48,31 @@ else:
         st.rerun()
 
     # --- CONNECT TO GOOGLE SHEETS VIA STANDARD GSPREAD ---
-    @st.cache_resource(ttl="0d")
+   @st.cache_resource(ttl="0d")
     def get_google_sheet():
         # Define permissions scope
         scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
         
-        # Build credential dictionary safely without TOML nesting bugs
+        # Clean and rebuild the private key to prevent MalformedFraming errors
+        raw_key = st.secrets["GSHEETS_PRIVATE_KEY"]
+        
+        # 1. Clean out existing raw/literal breaks and normalize whitespaces
+        cleaned_key = raw_key.replace("-----BEGIN PRIVATE KEY-----", "").replace("-----END PRIVATE KEY-----", "")
+        cleaned_key = "".join(cleaned_key.split()) # Strips all rogue spaces/tabs/newlines
+        
+        # 2. Re-architect the correct RSA layout with explicit, strict line lengths
+        formatted_private_key = "-----BEGIN PRIVATE KEY-----\n"
+        # Split the base64 string into healthy 64-character segments
+        for i in range(0, len(cleaned_key), 64):
+            formatted_private_key += cleaned_key[i:i+64] + "\n"
+        formatted_private_key += "-----END PRIVATE KEY-----\n"
+
+        # Build credential dictionary safely 
         creds_dict = {
             "type": "service_account",
             "project_id": st.secrets["GSHEETS_PROJECT_ID"],
             "private_key_id": st.secrets["GSHEETS_PRIVATE_KEY_ID"],
-            "private_key": st.secrets["GSHEETS_PRIVATE_KEY"].replace(r'\n', '\n'),
+            "private_key": formatted_private_key,  # <-- Injects our sanitized, perfect key structure
             "client_email": st.secrets["GSHEETS_CLIENT_EMAIL"],
             "client_id": st.secrets["GSHEETS_CLIENT_ID"],
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
