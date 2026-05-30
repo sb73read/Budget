@@ -10,6 +10,22 @@ from google.oauth2.service_account import Credentials
 st.set_page_config(page_title="Personal Budget Tracker", layout="wide")
 st.title("💰 Personal Budget & Expense Tracker")
 
+# --- CUSTOM COLOR MAP FOR CATEGORIES ---
+# This ensures each category keeps a beautiful, distinct color across all charts
+CATEGORY_COLORS = {
+    "Grocery": "#3498db",           # Blue
+    "OTT Bills": "#9b59b6",          # Purple
+    "Mobile Bills": "#8e44ad",       # Dark Purple
+    "Vacation": "#2ecc71",           # Green
+    "Rent and Utilities": "#e67e22", # Orange
+    "Movies and Concerts": "#95a5a6",# Gray
+    "Charity and Gift": "#e74c3c",   # Red
+    "For House": "#1abc9c",          # Teal
+    "Travel to Work": "#f1c40f",      # Yellow
+    "Eat Out": "#d35400",            # Dark Orange
+    "Others": "#7f8c8d"              # Slate Gray
+}
+
 # --- GOOGLE OAUTH CONFIGURATION ---
 CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID", "YOUR_CLIENT_ID")
 CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET", "YOUR_CLIENT_SECRET")
@@ -20,7 +36,6 @@ REVOKE_URL = "https://oauth2.googleapis.com/revoke"
 if "auth" not in st.session_state:
     st.session_state.auth = None
 
-# Initialize OAuth Component
 oauth2 = OAuth2Component(CLIENT_ID, CLIENT_SECRET, AUTHORIZE_URL, TOKEN_URL, TOKEN_URL, REVOKE_URL)
 
 # --- CHECK AUTHENTICATION ---
@@ -40,21 +55,22 @@ if st.session_state.auth is None:
         st.rerun()
 
 else:
-    # --- USER IS LOGGED IN: UNLOCK APP ---
-    st.sidebar.success("🔒 Authenticated via Google")
+    # --- USER PROFILE RECOGNITION ---
+    # Decoding the token payload to automatically fetch the user's real name
+    user_info = st.session_state.auth.get("id_token", {})
+    # Fallback to email or "Unknown User" if profile name mapping is restricted
+    user_name = st.session_state.auth.get("token", {}).get("email", "Default User")
+    
+    st.sidebar.success(f"👋 Welcome, {user_name}!")
     if st.sidebar.button("Log Out"):
         st.session_state.auth = None
         st.rerun()
 
-    # --- CONNECT TO GOOGLE SHEETS VIA STANDARD GSPREAD ---
+    # --- CONNECT TO GOOGLE SHEETS ---
     @st.cache_resource(ttl="0d")
     def get_google_sheet():
-        # ⬇️ CHANGE THIS: Only request spreadsheet access to satisfy Google's OAuth Policy
-        scopes = ["https://www.googleapis.com/auth/spreadsheets"]
-        
-        # Clean up any potential format issues with the private key
-        raw_key = st.secrets["GSHEETS_PRIVATE_KEY"]
-        fixed_key = raw_key.replace(r'\\n', '\n').replace(r'\n', '\n')
+        scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
+        fixed_key = st.secrets["GSHEETS_PRIVATE_KEY"].replace(r'\\n', '\n').replace(r'\n', '\n')
 
         creds_dict = {
             "type": "service_account",
@@ -74,10 +90,10 @@ else:
         sheet = client.open_by_url(st.secrets["GSHEETS_SPREADSHEET"])
         return sheet.get_worksheet(0)
 
-    # Initialize connection variables safely
-    # Core data placeholders
     worksheet = None
-    existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
+    # Updated default tracking DataFrame with a dedicated 'User' tracking column
+    expected_headers = ["Date", "Type", "Category", "Place/Shop", "Amount", "User"]
+    existing_data = pd.DataFrame(columns=expected_headers)
 
     try:
         worksheet = get_google_sheet()
@@ -85,23 +101,19 @@ else:
         
         if not raw_rows or len(raw_rows) <= 1:
             if not raw_rows:
-                headers = ["Date", "Type", "Category", "Place/Shop", "Amount"]
-                worksheet.append_row(headers)
-            existing_data = pd.DataFrame(columns=["Date", "Type", "Category", "Place/Shop", "Amount"])
+                worksheet.append_row(expected_headers)
+            existing_data = pd.DataFrame(columns=expected_headers)
         else:
-            existing_data = pd.DataFrame(raw_rows[1:], columns=raw_rows[0])
-            
+            # Rebuild dataframe checking that old versions without the 'User' column don't crash
+            headers = raw_rows[0]
+            existing_data = pd.DataFrame(raw_rows[1:], columns=headers)
+            if "User" not in existing_data.columns:
+                existing_data["User"] = "Legacy Entry"
     except Exception as e:
-        # 🚨 THIS IS THE FIX: This displays the real API problem on your app screen
         st.error(f"❌ Actual API Error Caught: {str(e)}")
-        st.info(f"Error Type: {type(e).__name__}")
 
     # --- CATEGORY LISTS ---
-    EXPENSE_CATEGORIES = [
-        "Grocery", "OTT Bills", "Mobile Bills", "Vacation", 
-        "Rent and Utilities", "Movies and Concerts", "Charity and Gift", 
-        "For House", "Travel to Work", "Eat Out", "Others"
-    ]
+    EXPENSE_CATEGORIES = list(CATEGORY_COLORS.keys())
     INCOME_CATEGORIES = ["Salary", "Interest", "Investment", "Freelance/Side Hustle", "Others"]
 
     # --- APP NAVIGATION TABS ---
@@ -122,29 +134,28 @@ else:
                 
         with col2:
             place = st.text_input("Place / Shop / Source Description", placeholder="e.g., Target, Office, Landlord")
-            amount = st.number_input("Amount (£)", min_value=0.0, step=0.01, format="%.2f")
+            amount = st.number_input("Amount ($)", min_value=0.0, step=0.01, format="%.2f")
 
-        # Disable button if the connection to Google Sheets failed
         button_disabled = worksheet is None
         
         if st.button("Submit Entry", type="primary", disabled=button_disabled):
+            # Automated user tagging payload row
             new_row_data = [
                 date.strftime("%Y-%m-%d"),
                 transaction_type,
                 category,
                 place,
-                float(amount)
+                float(amount),
+                user_name  # <-- Automatically logs who spent the money
             ]
             
             try:
                 worksheet.append_row(new_row_data)
-                st.success(f"Success! Appended {transaction_type} of £{amount:.2f} to your spreadsheet.")
+                st.success(f"Success! Appended {transaction_type} of ${amount:.2f} to your spreadsheet.")
+                st.clear_cache()
                 st.rerun()
             except Exception as e:
                 st.error(f"Could not save row to Google Sheet: {e}")
-                
-        if button_disabled:
-            st.warning("⚠️ Submission is locked because the app cannot connect to your Google Sheet. Check the connection error above.")
 
     # --- TAB 2: METRICS & VISUALIZATIONS ---
     with tab2:
@@ -160,27 +171,63 @@ else:
             net_savings = total_income - total_expense
             
             card1, card2, card3 = st.columns(3)
-            card1.metric("Total Income", f"£{total_income:,.2f}")
-            card2.metric("Total Expenses", f"£{total_expense:,.2f}", delta=f"-£{total_expense:,.2f}", delta_color="inverse")
-            card3.metric("Net Savings", f"£{net_savings:,.2f}")
+            card1.metric("Total Income", f"${total_income:,.2f}")
+            card2.metric("Total Expenses", f"${total_expense:,.2f}", delta=f"-${total_expense:,.2f}", delta_color="inverse")
+            card3.metric("Net Savings", f"${net_savings:,.2f}")
             
             st.markdown("---")
             
+            # --- NEW ADDITION: SEPARATED CATEGORICAL CALCULATIONS SUMS ---
+            st.subheader("📊 Expense Breakdown Summary Table")
+            expense_df = existing_data[existing_data["Type"] == "Expense"]
+            
+            if not expense_df.empty:
+                # Group by and aggregate to sum up each individual category separately
+                category_sums = expense_df.groupby("Category")["Amount"].sum().reset_index()
+                category_sums = category_sums.sort_values(by="Amount", ascending=False).reset_index(drop=True)
+                
+                # Format for presentation
+                category_sums_display = category_sums.copy()
+                category_sums_display["Amount"] = category_sums_display["Amount"].map("${:,.2f}".format)
+                
+                # Display individual sums side by side using clean UI columns
+                cols = st.columns(4)
+                for index, row in category_sums.iterrows():
+                    col_index = index % 4
+                    with cols[col_index]:
+                        st.metric(label=row["Category"], value=f"${row['Amount']:,.2f}")
+                
+                st.markdown("---")
+            
+            # Visualizations Side-by-Side
             chart_col1, chart_col2 = st.columns(2)
             with chart_col1:
-                st.subheader("Expense Breakdown")
-                expense_df = existing_data[existing_data["Type"] == "Expense"]
+                st.subheader("Expense Volume Allocation")
                 if not expense_df.empty:
-                    fig_pie = px.pie(expense_df, values="Amount", names="Category", hole=0.4,
-                                     color_discrete_sequence=px.colors.qualitative.Pastel)
+                    # Injects custom color coding map directly into the Pie layout
+                    fig_pie = px.pie(
+                        expense_df, 
+                        values="Amount", 
+                        names="Category", 
+                        hole=0.4,
+                        color="Category",
+                        color_discrete_map=CATEGORY_COLORS
+                    )
                     st.plotly_chart(fig_pie, use_container_width=True)
                 else:
-                    st.write("No expenses logged to generate a layout chart.")
+                    st.write("No expenses logged to generate a chart.")
                     
             with chart_col2:
-                st.subheader("Cash Flow Trend")
-                fig_bar = px.bar(existing_data, x="Date", y="Amount", color="Type", barmode="group",
-                                 color_discrete_map={"Income": "#2ecc71", "Expense": "#e74c3c"})
+                st.subheader("Cash Flow Trend via Purchaser Profile")
+                # Group bars by user profile so you can see who logged what amount
+                fig_bar = px.bar(
+                    existing_data, 
+                    x="Date", 
+                    y="Amount", 
+                    color="User", 
+                    barmode="group",
+                    hover_data=["Category", "Place/Shop"]
+                )
                 st.plotly_chart(fig_bar, use_container_width=True)
 
     # --- TAB 3: DATA LEDGER ---
