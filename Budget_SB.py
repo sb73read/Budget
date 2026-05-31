@@ -142,7 +142,10 @@ else:
                             sh.add_worksheet(title=c_sheet_name, rows=100, cols=10).append_row(expected_headers)
                         sh.worksheet(c_sheet_name).append_row(new_row)
                         st.success(f"Budget item appended directly to tab: '{c_sheet_name}'")
-                        st.clear_cache(); st.rerun()
+                        
+                        # 🔄 CHANGE THIS LINE HERE:
+                        st.cache_resource.clear() 
+                        st.rerun()
                     except Exception as e: st.error(f"Error: {e}")
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -176,7 +179,10 @@ else:
                                 sh.add_worksheet(title=c_sheet_name, rows=100, cols=10).append_row(expected_headers)
                             sh.worksheet(c_sheet_name).append_row(new_row)
                             st.success(f"Work Trip cost recorded to: '{c_sheet_name}'")
-                            st.clear_cache(); st.rerun()
+                            
+                            # 🔄 CHANGE THIS LINE HERE:
+                            st.cache_resource.clear()
+                            st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
 
         # GUI BLOCK 3: VACATIONS (CONDITIONAL)
@@ -200,7 +206,10 @@ else:
                                 sh.add_worksheet(title=c_sheet_name, rows=100, cols=10).append_row(expected_headers)
                             sh.worksheet(c_sheet_name).append_row(new_row)
                             st.success(f"Vacation expense recorded to: '{c_sheet_name}'")
-                            st.clear_cache(); st.rerun()
+                            
+                            # 🔄 CHANGE THIS LINE HERE:
+                            st.cache_resource.clear()
+                            st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -222,7 +231,10 @@ else:
                     try:
                         sh.worksheet("savings").append_row(new_inv_row)
                         st.success("Asset logged securely inside 'savings' worksheet!")
-                        st.clear_cache(); st.rerun()
+                        
+                        # 🔄 CHANGE THIS LINE HERE:
+                        st.cache_resource.clear()
+                        st.rerun()
                     except Exception as e: st.error(f"Failed: {e}")
 
     # --- TAB 2: ANALYTICS CHANNELS ---
