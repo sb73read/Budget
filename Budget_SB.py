@@ -94,21 +94,56 @@ else:
 
     expected_headers = ["Date", "Type", "Category", "Place/Shop", "Amount", "User"]
 
-    @st.cache_data(ttl=60, show_spinner=False)
+    def _dedupe_headers(header):
+        """Sheets sometimes carry blank/repeated trailing header cells (e.g. from the
+        cols=10 worksheets this app creates) which produce duplicate column labels and
+        break pandas. Give every blank/duplicate header a unique name so the DataFrame
+        can always be built, then downstream code just keeps the columns it expects."""
+        seen = {}
+        clean = []
+        for i, h in enumerate(header):
+            h = (h or "").strip() or f"_blank{i}"
+            if h in seen:
+                seen[h] += 1
+                h = f"{h}_{seen[h]}"
+            else:
+                seen[h] = 0
+            clean.append(h)
+        return clean
+
     def load_sheet(sheet_name):
-        """Cached read of one worksheet (60s TTL; cleared explicitly after writes)."""
+        """Read of one worksheet, tolerant of duplicate/blank/extra header cells."""
         raw_rows = sh.worksheet(sheet_name).get_all_values()
-        return pd.DataFrame(raw_rows[1:], columns=raw_rows[0]) if raw_rows else pd.DataFrame(columns=expected_headers)
+        if not raw_rows:
+            return pd.DataFrame(columns=expected_headers)
+        header = _dedupe_headers(raw_rows[0])
+        df = pd.DataFrame(raw_rows[1:], columns=header)
+        for col in expected_headers:
+            if col not in df.columns:
+                df[col] = ""
+        return df[expected_headers]
+
+    @st.cache_data(ttl=60, show_spinner=False)
+    def load_sheet_cached(sheet_name):
+        return load_sheet(sheet_name)
 
     @st.cache_data(ttl=60, show_spinner="Loading full ledger history…")
     def load_all_months(month_names):
         frames = []
+        skipped = []
         for name in month_names:
-            df = load_sheet(name)
+            try:
+                df = load_sheet_cached(name)
+            except Exception as sheet_err:
+                skipped.append((name, str(sheet_err)))
+                continue
             if not df.empty:
                 df = df.copy()
                 df["Month"] = name
                 frames.append(df)
+        if skipped:
+            for name, err in skipped:
+                st.warning(f"⚠️ Skipped tab '{name}' while loading history: {err}")
         if not frames:
             return pd.DataFrame(columns=expected_headers + ["Month"])
         combined = pd.concat(frames, ignore_index=True)
@@ -136,17 +171,17 @@ else:
         )
 
         if target_month_sheet != "None":
-            existing_data = load_sheet(target_month_sheet)
+            existing_data = load_sheet_cached(target_month_sheet)
         else:
             existing_data = pd.DataFrame(columns=expected_headers)
 
-        savings_data = load_sheet("savings")
+        savings_data = load_sheet_cached("savings")
 
         # Combined, cleaned data across every monthly tab — powers trend / ledger / household views.
         all_data = load_all_months(tuple(monthly_tabs))
 
         if st.sidebar.button("🔄 Refresh data from Google Sheet"):
-            load_sheet.clear()
+            load_sheet_cached.clear()
             load_all_months.clear()
             st.rerun()
 
@@ -186,7 +221,7 @@ else:
                             sh.add_worksheet(title=c_sheet_name, rows=100, cols=10).append_row(expected_headers)
                         sh.worksheet(c_sheet_name).append_row(new_row)
                         st.success(f"Budget item appended directly to tab: '{c_sheet_name}'")
-                        load_sheet.clear()
+                        load_sheet_cached.clear()
                         load_all_months.clear()
                         st.rerun()
                     except Exception as e: st.error(f"Error: {e}")
@@ -222,7 +257,7 @@ else:
                                 sh.add_worksheet(title=c_sheet_name, rows=100, cols=10).append_row(expected_headers)
                             sh.worksheet(c_sheet_name).append_row(new_row)
                             st.success(f"Work Trip cost recorded to: '{c_sheet_name}'")
-                            load_sheet.clear()
+                            load_sheet_cached.clear()
                             load_all_months.clear()
                             st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
@@ -248,7 +283,7 @@ else:
                                 sh.add_worksheet(title=c_sheet_name, rows=100, cols=10).append_row(expected_headers)
                             sh.worksheet(c_sheet_name).append_row(new_row)
                             st.success(f"Vacation expense recorded to: '{c_sheet_name}'")
-                            load_sheet.clear()
+                            load_sheet_cached.clear()
                             load_all_months.clear()
                             st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
@@ -272,7 +307,7 @@ else:
                     try:
                         sh.worksheet("savings").append_row(new_inv_row)
                         st.success("Asset logged securely inside 'savings' worksheet!")
-                        load_sheet.clear()
+                        load_sheet_cached.clear()
                         load_all_months.clear()
                         st.rerun()
                     except Exception as e: st.error(f"Failed: {e}")
