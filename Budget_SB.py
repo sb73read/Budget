@@ -5,6 +5,7 @@ from datetime import datetime
 from streamlit_oauth import OAuth2Component
 import gspread
 from google.oauth2.service_account import Credentials
+import gspread_formatting as gf
 import base64
 import json
 
@@ -18,6 +19,8 @@ CATEGORY_COLORS = {
     "Rent and Utilities": "#e67e22", "Movies and Concerts": "#95a5a6",
     "Charity and Gift": "#e74c3c", "For House": "#1abc9c", "Travel to Work": "#f1c40f",
     "Eat Out": "#d35400", "Others": "#7f8c8d",
+    "Clothing": "#e91e63", "OTT Subscription": "#673ab7", "Haircut/Salon": "#00bcd4",
+    "Vacation/Travel": "#ff7043",
     # Investment Vehicles
     "Deposit": "#16a085", "Gold": "#f39c12", "Mutual Funds": "#27ae60",
     "Stock": "#2980b9", "Forex": "#d35400", "Insurance": "#c0392b",
@@ -93,6 +96,29 @@ else:
         return gspread.authorize(Credentials.from_service_account_info(creds_dict, scopes=scopes))
 
     expected_headers = ["Date", "Type", "Category", "Place/Shop", "Amount", "User"]
+    CATEGORY_COLUMN_A1 = "C2:C5000"  # "Category" is the 3rd column in expected_headers
+
+    def _hex_to_gf_color(hex_str):
+        hex_str = hex_str.lstrip("#")
+        r, g, b = (int(hex_str[i:i + 2], 16) / 255 for i in (0, 2, 4))
+        return gf.Color(r, g, b)
+
+    def apply_category_colors(worksheet):
+        """Color-code the Category column in Google Sheets to match the app's chart colors.
+        Re-running this is safe: ConditionalFormatRules.save() deletes the sheet's existing
+        rules and re-adds the current list, so it never accumulates duplicates."""
+        rules = gf.get_conditional_format_rules(worksheet)
+        rules.clear()
+        cell_range = gf.GridRange.from_a1_range(CATEGORY_COLUMN_A1, worksheet)
+        for category, hex_color in CATEGORY_COLORS.items():
+            rules.append(gf.ConditionalFormatRule(
+                ranges=[cell_range],
+                booleanRule=gf.BooleanRule(
+                    condition=gf.BooleanCondition("TEXT_EQ", [category]),
+                    format=gf.CellFormat(backgroundColor=_hex_to_gf_color(hex_color)),
+                ),
+            ))
+        rules.save()
 
     def _dedupe_headers(header):
         """Sheets sometimes carry blank/repeated trailing header cells (e.g. from the
@@ -185,13 +211,32 @@ else:
             load_all_months.clear()
             st.rerun()
 
+        with st.sidebar.expander("🎨 Category Color Coding"):
+            st.caption("Colors the 'Category' column in Google Sheets to match this app's chart colors.")
+            color_scope = st.radio(
+                "Apply to", ["This month's tab only", "All tabs (every month + savings)"],
+                key="color_scope", label_visibility="collapsed",
+            )
+            if st.button("Apply colors in Google Sheet"):
+                targets = (
+                    [target_month_sheet] if color_scope == "This month's tab only" and target_month_sheet != "None"
+                    else sheet_names
+                )
+                try:
+                    with st.spinner(f"Coloring {len(targets)} tab(s)…"):
+                        for name in targets:
+                            apply_category_colors(sh.worksheet(name))
+                    st.success(f"✅ Applied category colors to: {', '.join(targets)}")
+                except Exception as color_err:
+                    st.error(f"❌ Couldn't apply colors: {color_err}")
+
     except Exception as e:
         st.error(f"❌ Core File Synchronization Failure: {e}")
         existing_data = pd.DataFrame(columns=expected_headers)
         savings_data = pd.DataFrame(columns=expected_headers)
         all_data = pd.DataFrame(columns=expected_headers + ["Month"])
 
-    EXPENSE_CATEGORIES = ["Grocery", "OTT Bills", "Mobile Bills", "Rent and Utilities", "Movies and Concerts", "Charity and Gift", "For House", "Travel to Work", "Eat Out", "Others"]
+    EXPENSE_CATEGORIES = ["Grocery", "OTT Bills", "Mobile Bills", "Rent and Utilities", "Movies and Concerts", "Charity and Gift", "For House", "Travel to Work", "Eat Out", "Clothing", "OTT Subscription", "Haircut/Salon", "Vacation/Travel", "Others"]
     INCOME_CATEGORIES = ["Salary", "Interest", "Investment", "Freelance/Side Hustle", "Others"]
     INVESTMENT_CATEGORIES = ["Deposit", "Gold", "Mutual Funds", "Stock", "Forex", "Insurance"]
     TRIP_CATEGORIES = ["Food", "Accommodation", "Travel", "Activities", "Shopping"]
@@ -322,6 +367,7 @@ else:
                 "📊 Monthly Summary",
                 "🥧 Category Breakdown",
                 "📈 Trend Over Time",
+                "🆚 Compare Months",
                 "✈️ Trips & Vacations",
                 "💹 Savings & Investments",
                 "👥 Household Split",
@@ -447,6 +493,62 @@ else:
                         fig3 = px.area(cat_trend, x="Month", y="Amount", color="Category",
                                        color_discrete_map=CATEGORY_COLORS, title="Expense category trend")
                         st.plotly_chart(fig3, use_container_width=True)
+
+        # ---------------- COMPARE MONTHS ----------------
+        elif analysis_mode == "🆚 Compare Months":
+            st.subheader("Compare specific months side by side")
+            if all_data.empty or len(monthly_tabs) < 2:
+                st.info("Need at least two months of data to compare.")
+            else:
+                default_months = monthly_tabs[-2:]
+                compare_months = st.multiselect(
+                    "Months to compare", monthly_tabs, default=default_months, key="compare_months"
+                )
+
+                if len(compare_months) < 2:
+                    st.info("Pick at least two months.")
+                else:
+                    cmp_df = all_data[all_data["Month"].isin(compare_months)]
+
+                    # --- KPI comparison table ---
+                    kpi = cmp_df.pivot_table(index="Month", columns="Type", values="Amount", aggfunc="sum", fill_value=0)
+                    for col in ["Income", "Expense", "Work Trip", "Vacation"]:
+                        if col not in kpi.columns:
+                            kpi[col] = 0.0
+                    kpi["Net"] = kpi["Income"] - kpi["Expense"] - kpi["Work Trip"] - kpi["Vacation"]
+                    kpi = kpi.reindex(compare_months)[["Income", "Expense", "Work Trip", "Vacation", "Net"]]
+                    st.dataframe(kpi.style.format("£{:,.2f}"), use_container_width=True)
+
+                    # --- Income vs expense vs net, grouped by month ---
+                    kpi_long = kpi.reset_index().melt(id_vars="Month", var_name="Metric", value_name="Amount")
+                    fig = px.bar(kpi_long, x="Metric", y="Amount", color="Month", barmode="group",
+                                 title="Income / Expense / Net by month")
+                    st.plotly_chart(fig, use_container_width=True)
+
+                    # --- Category-by-category comparison (expenses only) ---
+                    st.subheader("Expense category comparison")
+                    cat_cmp = cmp_df[cmp_df["Type"] == "Expense"].groupby(["Category", "Month"], as_index=False)["Amount"].sum()
+                    if cat_cmp.empty:
+                        st.info("No expense entries in the selected months.")
+                    else:
+                        fig2 = px.bar(cat_cmp, x="Category", y="Amount", color="Month", barmode="group",
+                                      title="Expense by category, month vs month")
+                        st.plotly_chart(fig2, use_container_width=True)
+
+                    # --- Month-over-month delta, when exactly two months are picked ---
+                    if len(compare_months) == 2:
+                        m1, m2 = compare_months[0], compare_months[1]
+                        st.subheader(f"Change: {m1} → {m2}")
+                        delta = kpi.loc[[m1, m2]].T
+                        delta.columns = [m1, m2]
+                        delta["Change"] = delta[m2] - delta[m1]
+                        delta["% Change"] = delta.apply(
+                            lambda r: (r["Change"] / abs(r[m1]) * 100) if r[m1] != 0 else float("nan"), axis=1
+                        )
+                        st.dataframe(
+                            delta.style.format({m1: "£{:,.2f}", m2: "£{:,.2f}", "Change": "£{:+,.2f}", "% Change": "{:+.1f}%"}),
+                            use_container_width=True,
+                        )
 
         # ---------------- TRIPS & VACATIONS ----------------
         elif analysis_mode == "✈️ Trips & Vacations":
